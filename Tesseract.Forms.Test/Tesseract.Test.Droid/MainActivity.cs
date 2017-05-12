@@ -31,7 +31,8 @@ namespace Tesseract.Test.Droid
         private bool debugOnce = false;
         private CameraOverlayView overlay;
         private ConvertYuvToJpeg converter;
-        private int convertYLevel = 220;
+        //        private int convertYLevel = 220;
+        private int convertYLevel = 94;
         private int prevGetY;
 
         protected override void OnCreate (Bundle bundle)
@@ -49,7 +50,7 @@ namespace Tesseract.Test.Droid
             overlay = new CameraOverlayView(this);
             AddContentView(overlay,  new ViewGroup.LayoutParams(ViewGroup.LayoutParams.FillParent,ViewGroup.LayoutParams.FillParent));
 
-            converter = new ConvertYToJpeg(this.SaveBitmap,convertYLevel);
+            converter = new ConvertYInvertToJpeg(this.SaveBitmap,convertYLevel);
 
             cameraSurface.Touch += (s, e) =>
             {
@@ -85,7 +86,8 @@ namespace Tesseract.Test.Droid
                     //if(converter.GetType() == typeof(ConvertYuvToJpeg))
                     if (true)
                     {
-                        converter = new ConvertYToJpeg(this.SaveBitmap, convertYLevel);
+                        //converter = new ConvertYToJpeg(this.SaveBitmap, convertYLevel);
+                        converter = new ConvertYInvertToJpeg(this.SaveBitmap, convertYLevel);
                     }
                     else if(converter.GetType() == typeof(ConvertYToJpeg))
                     {
