@@ -1,138 +1,184 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-
-using Android.App;
+﻿using Android.App;
 using Android.Content;
+using Android.Content.PM;
+using Android.Graphics;
+using Android.OS;
 using Android.Runtime;
+using Android.Util;
 using Android.Views;
 using Android.Widget;
-using Android.OS;
-using Android.Graphics;
+using System;
+using System.Collections.Generic;
 using System.IO;
 using Tesseract.Droid;
-using System.Diagnostics;
-using System.Collections.Concurrent;
-using System.Threading;
-using System.Threading.Tasks;
-using Android.Content.PM;
-using Java.IO;
-using Android.Util;
+
+
+/// <summary>
+/// C:\Users\LYCEE\Documents\e612recompaile\jd-gui-windows-1.4.0\jd-gui.exe C:\Users\LYCEE\Documents\e612recompaile\base.apk_7seg\classes-dex2jar.jar 
+/// </summary>
 
 namespace Tesseract.Test.Droid
 {
-    [Activity (Label = "ReceiptScanner", Icon = "@drawable/icon", MainLauncher = true, ConfigurationChanges = ConfigChanges.ScreenSize | ConfigChanges.Orientation)]
+    [Activity (Label = "ReceiptScanner", Icon = "@drawable/icon", MainLauncher = true
+        , ConfigurationChanges = ConfigChanges.ScreenSize | ConfigChanges.Orientation
+        , ScreenOrientation = ScreenOrientation.Portrait)]
     public class TextureViewActivity : Activity, ISurfaceHolderCallback, Android.Hardware.Camera.IPreviewCallback
     {
-        private const System.String TAG = "TextureViewActivity";
         private bool syncObj = false;
         Android.Hardware.Camera camera;
         TesseractApi _api;
-        private bool debugOnce = false;
-        private CameraOverlayView overlay;
-        private ConvertYuvToJpeg converter;
-        //        private int convertYLevel = 220;
-        private int convertYLevel = 94;
-        private int prevGetY;
+        IWindowManager windowManager;
+        SurfaceView cameraSurface;
+        Android.Hardware.Camera.Size previewSize;
+        IList<Android.Hardware.Camera.Size> supportedPreviewSizes;
+        CameraPreviewRenderer overlay; //SurfaceView sub class
+        TextureView hudOverlay;
+        Size dispSize;
 
         protected override void OnCreate (Bundle bundle)
         {
-            base.OnCreate (bundle);
-            SetContentView (Resource.Layout.Main);
-            _api = new TesseractApi (this, AssetsDeployment.OncePerVersion);
-            _api.Init ("eng");
-            _api.SetWhitelist("0123456789");
-            SurfaceView cameraSurface = FindViewById<SurfaceView> (Resource.Id.cpPreview);
+            base.OnCreate(bundle);
+            SetContentView(Resource.Layout.Main);
+            _api = new TesseractApi(this, AssetsDeployment.OncePerInitialization);
+            //
+            var task = _api.Init("eng");
+            //task.Start();
+            // task.Wait();
+            //var t = task.Result;
+            //_api.SetWhitelist("0123456789");
+            cameraSurface = FindViewById<SurfaceView>(Resource.Id.cpPreview);
             ISurfaceHolder holder = cameraSurface.Holder;
-            holder.AddCallback (this);
-            holder.SetType (SurfaceType.PushBuffers);
+            holder.AddCallback(this);
+            holder.SetType(SurfaceType.PushBuffers);
+            windowManager = this.GetSystemService(Context.WindowService).JavaCast<IWindowManager>();
 
-            overlay = new CameraOverlayView(this);
-            AddContentView(overlay,  new ViewGroup.LayoutParams(ViewGroup.LayoutParams.FillParent,ViewGroup.LayoutParams.FillParent));
+            overlay = new CameraPreviewRenderer(this, null);
+            AddContentView(overlay, new ViewGroup.LayoutParams(
+                                    ViewGroup.LayoutParams.MatchParent,
+                                    ViewGroup.LayoutParams.FillParent));
+            LinearLayout linearLayout = ConstructLayout();
 
-            converter = new ConvertYInvertToJpeg(this.SaveBitmap,convertYLevel);
-
-            cameraSurface.Touch += (s, e) =>
-            {
-
-                System.Diagnostics.Debug.WriteLine("cameraSurface.Touch e.Event.Action=" + e.Event.Action.ToString());
-            };
-
-            overlay.Touch += (s, e) =>
-            {
-                System.Diagnostics.Debug.WriteLine("overlay.Touch e.Event.Action=" + e.Event.Action.ToString());
-                if(e.Event.Action == MotionEventActions.Down)
-                {
-                    camera.StopPreview();
-                }
-                else if (e.Event.Action == MotionEventActions.Move)
-                {
-                    if(Math.Abs( e.Event.GetY() - prevGetY) > 3 )
-                    {
-                        if(e.Event.GetY() - prevGetY > 0)
-                        {
-                            convertYLevel = Math.Min(0xff, convertYLevel + 1);
-                        }
-                        else
-                        {
-                            convertYLevel = Math.Max(0x0, convertYLevel - 1);
-                        }
-                    }
-                    prevGetY = (int)e.Event.GetY();
-
-                }
-                else if (e.Event.Action == MotionEventActions.Up)
-                {
-                    //if(converter.GetType() == typeof(ConvertYuvToJpeg))
-                    if (true)
-                    {
-                        //converter = new ConvertYToJpeg(this.SaveBitmap, convertYLevel);
-                        converter = new ConvertYInvertToJpeg(this.SaveBitmap, convertYLevel);
-                    }
-                    else if(converter.GetType() == typeof(ConvertYToJpeg))
-                    {
-                        converter = new ConvertYuvToJpeg(this.SaveBitmap);
-                    }
-                    camera.StartPreview();
-                }
-
-            };
+            //ルートビューとして、リニアレイアウトを設定する
+            AddContentView(linearLayout, new ViewGroup.LayoutParams(
+                                    ViewGroup.LayoutParams.MatchParent,
+                                    ViewGroup.LayoutParams.WrapContent));
 
 
+            var metrics = new DisplayMetrics();
+            WindowManager.DefaultDisplay.GetMetrics(metrics);
+
+            dispSize = new Size(metrics.WidthPixels, metrics.HeightPixels);
         }
+
+        private LinearLayout ConstructLayout()
+        {
+            //リニアレイアウトを生成
+            var linearLayout = new LinearLayout(this)
+            {
+                Orientation = Orientation.Vertical //子コントロールを縦方向に配置する
+
+            };
+
+            hudOverlay = new TextureView(this);
+
+           // WindowManager wm = (WindowManager)context.getSystemService(WINDOW_SERVICE);
+            Display disp = windowManager.DefaultDisplay;
+
+            //  hudOverlay.SetMinimumHeight(disp.Height/3);
+            //hudOverlay.LayoutDirection = (1 / 3);
+            linearLayout.AddView(hudOverlay,0, disp.Height*7 / 10);
+
+
+            //ボタンの生成
+            var button = new Button(this)
+            {
+                Text = "OK"
+            };
+            //ボタンをクリックした時のイベント処理
+            button.Click += (sender, e) =>
+            {
+                //トーストを表示
+                Toast.MakeText(this, "メッセージ", ToastLength.Short).Show();
+            };
+
+            //リニアレイアウトにボタンを追加
+            linearLayout.AddView(button);
+            return linearLayout;
+        }
+
+        bool apiInitializedFirst = true;
+
 
         public async void OnPreviewFrame (byte[] data, Android.Hardware.Camera camera)
         {
+            //   await overlay.syncObj.WaitAsync().ConfigureAwait(false);
             if (syncObj)
                 return;
-            if (!_api.Initialized)
-                return;
-            syncObj = true;
-            var preproData = converter.Convert(data, camera);
-            overlay.PreprocessingPreviewFrame = BitmapFactory.DecodeByteArray(preproData, 0, preproData.Length, new BitmapFactory.Options { InSampleSize = 1 }); 
-
-            await _api.SetImage (preproData);
-            var results = _api.Results (PageIteratorLevel.Word);
-            //foreach (var result in results) {
-            //    Log.Debug ("TextureViewActivity", "Word: \"{0}\", confidence: {1}", result.Text, result.Confidence);
-            //}
             try
             {
-                if (results.Count() == 0)
+                if (!_api.Initialized)
+                    return;
+
+                syncObj = true;
+                if (apiInitializedFirst)
                 {
-                    overlay.Results = null;
+                    _api.SetWhitelist("0123456789");
+                    apiInitializedFirst = false;
                 }
-                else
+
+
+                var converter = new Converter();
+
+                var cameraParameters = camera.GetParameters();
+                var width = cameraParameters.PreviewSize.Width;
+                var height = cameraParameters.PreviewSize.Height;
+                var camfmt = cameraParameters.PreviewFormat;
+                var cameraPrm = new System.Drawing.Size(width, height);
+                var centerClip = new System.Drawing.Size(
+                  (int)(height * 0.30)
+                , (int)((width / 3) * 0.48));
+                await _api.SetImage(converter.ConvertYuvToJpeg(data, camfmt, cameraPrm, centerClip));
+
+                overlay.ToInterpret = converter.ToInterpret;
+
+                // await _api.SetImage(ConvertYuvToJpeg(data, camera));
+
+
+
+
+                //var task = _api.SetImage(ConvertYuvToJpeg(data, camera));
+                //task.Wait();
+                var results = _api.Results(PageIteratorLevel.Block);
+                //using (var cv = hudOverlay.LockCanvas())
+
+                overlay.ClearResults();
+
+                foreach (var result in results)
                 {
-                    overlay.Results = new List<Result>( results);
+                    try
+                    {
+                        overlay.ImplementResult(result);
+
+                        Log.Debug("TextureViewActivity", "Word: \"{0}\", confidence: {1}", result.Text, result.Confidence);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Debug("TextureViewActivity", ex.ToString());
+                    }
                 }
+                overlay.PostInvalidate();
+            //    await overlay.syncObj.WaitAsync().ConfigureAwait(false);
+
             }
-            catch(Exception ex)
+            finally
             {
-                System.Diagnostics.Debug.WriteLine(ex.ToString());
+               // overlay.syncObj.Release();
+
+                syncObj = false;
             }
             
-            syncObj = false;
+
+
         }
 
         public void SurfaceChanged (ISurfaceHolder holder, Format format, int width, int height)
@@ -143,41 +189,108 @@ namespace Tesseract.Test.Droid
         public void SurfaceCreated (ISurfaceHolder holder)
         {
             if (camera == null) {
-                camera = Android.Hardware.Camera.Open ();
-                camera.SetDisplayOrientation(90);
-                camera.SetPreviewDisplay (holder);
-                camera.SetPreviewCallback (this);
-                var param = camera.GetParameters();
-                var p = from k in camera.GetParameters().SupportedPreviewSizes orderby k.Width descending select k ;
-                foreach (var l in  p )
+                this.camera = Android.Hardware.Camera.Open ();
+                this.camera.SetPreviewDisplay (holder);
+                this.camera.SetPreviewCallback (this);
+
+                var parameters = camera.GetParameters();
+                supportedPreviewSizes = camera.GetParameters().SupportedPreviewSizes;
+                //プレビューサイズ設定
+                if (supportedPreviewSizes != null)
                 {
-                    Log.WriteLine(LogPriority.Info, "", string.Format("l.Width={0}", l.Width));
-                    if (l.Width <=1240)
+                    foreach (var size in supportedPreviewSizes)
                     {
-                        param.SetPreviewSize(l.Width, l.Height);
+                        Log.Debug("MainActivity","{0} {1}",size.Width,size.Height);
+                    }
+
+
+                    if (supportedPreviewSizes.Contains(
+                        new Android.Hardware.Camera.Size(camera, dispSize.Height, dispSize.Width)))
+                    {
+                        previewSize = new Android.Hardware.Camera.Size(camera, dispSize.Height, dispSize.Width);
+                    }
+                    else
+                    {
+                        //previewSize = GetOptimalPreviewSize(supportedPreviewSizes, cameraSurface.Width, cameraSurface.Height);
+                        previewSize = GetOptimalPreviewSize(supportedPreviewSizes, dispSize.Height, dispSize.Width);
+                    }
+                      
+                }
+                parameters.SetPreviewSize(previewSize.Width, previewSize.Height);
+
+
+                switch (windowManager.DefaultDisplay.Rotation)
+                {
+                    case SurfaceOrientation.Rotation0:
+                        camera.SetDisplayOrientation(90);
                         break;
+                    case SurfaceOrientation.Rotation90:
+                        camera.SetDisplayOrientation(0);
+                        break;
+                    case SurfaceOrientation.Rotation270:
+                        camera.SetDisplayOrientation(180);
+                        break;
+                }
+
+
+
+
+               // parameters.PreviewFormat = ImageFormatType.Yuv420888;
+
+                this.camera.SetParameters(parameters);
+                this.camera.StartPreview ();
+            }
+        }
+
+        Android.Hardware.Camera.Size GetOptimalPreviewSize(IList<Android.Hardware.Camera.Size> sizes, int w, int h)
+        {
+            const double AspectTolerance = 0.1;
+            double targetRatio = (double)w / h;
+
+            if (sizes == null)
+            {
+                return null;
+            }
+
+
+
+            Android.Hardware.Camera.Size optimalSize = null;
+            double minDiff = double.MaxValue;
+
+            int targetHeight = h;
+            foreach (Android.Hardware.Camera.Size size in sizes)
+            {
+                double ratio = (double)size.Width / size.Height;
+
+                if (Math.Abs(ratio - targetRatio) > AspectTolerance)
+                    continue;
+                if (Math.Abs(size.Height - targetHeight) < minDiff)
+                {
+                    optimalSize = size;
+                    minDiff = Math.Abs(size.Height - targetHeight);
+                }
+            }
+
+            if (optimalSize == null)
+            {
+                minDiff = double.MaxValue;
+                foreach (Android.Hardware.Camera.Size size in sizes)
+                {
+                    if (Math.Abs(size.Height - targetHeight) < minDiff)
+                    {
+                        optimalSize = size;
+                        minDiff = Math.Abs(size.Height - targetHeight);
                     }
                 }
-                                
-                //p.PreviewSize = new Android.Hardware.Camera.Size(Android.Hardware.Camera, 500, 500);
-                //p.PreviewFormat = Android.Graphics.ImageFormatType.Nv21;
-                camera.SetParameters(param);
-                camera.StartPreview ();
-
-                var cameraParameters = camera.GetParameters();
-                var width = cameraParameters.PreviewSize.Width;
-                var height = cameraParameters.PreviewSize.Height;
-                overlay.previewSize = new Rectangle(0, 0, height, width / 3);
-
             }
+
+            return optimalSize;
         }
 
         public void SurfaceDestroyed (ISurfaceHolder holder)
         {
 			
         }
-
-        private bool debugSwitch = false;
 
         private byte[] ConvertYuvToJpeg (byte[] yuvData, Android.Hardware.Camera camera)
         {
@@ -189,98 +302,12 @@ namespace Tesseract.Test.Droid
             var quality = 80;   // adjust this as needed
             yuv.CompressToJpeg (new Rect (0, 0, width, height), quality, ms);
             var jpegData = ms.ToArray ();
-            //byte[] jpegData = null;
 
-            try
-            {
-                // rotate
-                //var rotatedMs = new MemoryStream();
-
-                var src = BitmapFactory.DecodeByteArray(jpegData, 0, jpegData.Length, new BitmapFactory.Options { InSampleSize = 1 });
-                //var src = BitmapFactory.DecodeStream(ms);  // todo 何故かnullを返す
-                var rotate = Bitmap.CreateBitmap(src.Height, src.Width / 3, src.GetConfig());
-                var cv = new Canvas(rotate);
-                Paint p = new Paint();
-                p.AntiAlias = false;
-                p.SetStyle(Paint.Style.Fill);
-
-                //if (debugSwitch) SaveBitmap(src);
-
-                cv.Save(SaveFlags.All);
-
-                var delata = Math.Abs(src.Height- src.Width);
-                cv.Rotate(90,src.Width/2  , src.Height/2 );
-                cv.DrawBitmap(src, delata/2, delata/2, p);
-                cv.Restore();
-
-                p.Color = Color.White;
-                var r = (int)(src.Height * 0.1);
-                var r2 = (int)(src.Height * 0.3);
-                cv.DrawRect(0, 0, r2, rotate.Height,p);
-                cv.DrawRect(0, 0, rotate.Width, r, p);
-                cv.DrawRect(rotate.Width - r2, 0, rotate.Width, rotate.Height, p);
-                cv.DrawRect(0, rotate.Height - r, rotate.Width, rotate.Height, p);
-
-                //return cv.ToArray<byte>();
-                if (!debugSwitch) SaveBitmap(rotate);
-                overlay.PreprocessingPreviewFrame = rotate;
-                //cv.Restore();
-
-                var ms2 = new MemoryStream();
-                rotate.Compress(Bitmap.CompressFormat.Jpeg, quality, ms2);
-                //SaveBitmap(ms2);
-
-                return ms2.ToArray() ;
-
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine(ex.ToString());
-                return jpegData;
-            }
+            return jpegData;
         }
-
-        private void SaveBitmap(Bitmap bitmap )
-        {
-            if (!debugOnce) return;
-            var path = Android.OS.Environment.GetExternalStoragePublicDirectory(Android.OS.Environment.DirectoryPictures).Path;
-            var observePath = System.IO.Path.Combine(path, "Observe");
-            var pngfileName = System.IO.Path.Combine(observePath, $"{DateTime.Now.ToString("MMddHHmmssfff")}.jpg");
-            var di = new DirectoryInfo(observePath);
-            Log.Debug(TAG, pngfileName);
-            if (!di.Exists) di.Create();
-
-            using (var fs = new System.IO.FileStream(pngfileName, System.IO.FileMode.OpenOrCreate))
-            {
-                fs.SetLength(0);
-                bitmap.Compress(Bitmap.CompressFormat.Jpeg, 80, fs);
-                fs.Close();
-            }
-            debugOnce = false;
-        }
-
-        private void SaveBitmap(Stream stream)
-        {
-            if (!debugOnce) return;
-            var path = Android.OS.Environment.GetExternalStoragePublicDirectory(Android.OS.Environment.DirectoryPictures).Path;
-            var observePath = System.IO.Path.Combine(path, "Observe");
-            var pngfileName = System.IO.Path.Combine(observePath, $"{DateTime.Now.ToString("MMddHHmmssfff")}.jpg");
-            var di = new DirectoryInfo(observePath);
-            Log.Debug(TAG, pngfileName);
-            if (!di.Exists) di.Create();
-
-            using (var fs = new System.IO.FileStream(pngfileName, System.IO.FileMode.OpenOrCreate))
-            {
-                fs.SetLength(0);
-                //bitmap.Compress(Bitmap.CompressFormat.Jpeg, 99, fs);
-                stream.CopyTo(fs);
-                fs.Close();
-            }
-            debugOnce = false;
-        }
-
-
     }
 }
 
 
+//http://qiita.com/muak_x/items/c441e1e795ba22d597d6
+//SleepやResumeをどう処理するか
